@@ -3,39 +3,30 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <sys/un.h>
 #include "dhcp_message.h"
 
-#define Client_port_DHCP 1068
-#define Server_port_DHCP 1067
+// Eliminam porturile, folosim path-uri din config.h
 #define Buffer_size 1024
 
 int main()
 {
     int sockfd;
-    struct sockaddr_in broadcast_addr, my_addr;
+    struct sockaddr_un server_addr, my_addr;
 
-    // creez socket-ul udp
-    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+    // creez socket-ul unix
+    if ((sockfd = socket(AF_UNIX, SOCK_DGRAM, 0)) < 0)
     {
         perror("Eroare la crearea socketului");
         exit(EXIT_FAILURE);
     }
 
-    // discover e broadcast
-    int broadcastPerm = 1;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &broadcastPerm, sizeof(broadcastPerm)) < 0)
-    {
-        perror("Eroare la setarea broadcastului");
-        close(sockfd);
-        exit(EXIT_FAILURE);
-    }
-
     // configurez  adresa clientului
     memset(&my_addr, 0, sizeof(my_addr));
-    my_addr.sin_family = AF_INET;
-    my_addr.sin_addr.s_addr = INADDR_ANY;
-    my_addr.sin_port = htons(Client_port_DHCP);
+    my_addr.sun_family = AF_UNIX;
+    sprintf(my_addr.sun_path, CLIENT_PATH_TEMPLATE, getpid());
 
+    unlink(my_addr.sun_path); // Sterg fisierul daca exista
     if (bind(sockfd, (struct sockaddr *)&my_addr, sizeof(my_addr)) < 0)
     {
         perror("Eroare la bind client");
@@ -43,11 +34,10 @@ int main()
         exit(EXIT_FAILURE);
     }
 
-    //conf adresa broadcast
-    memset(&broadcast_addr, 0, sizeof(broadcast_addr));
-    broadcast_addr.sin_family = AF_INET;
-    broadcast_addr.sin_port = htons(Server_port_DHCP);
-    broadcast_addr.sin_addr.s_addr = inet_addr("255.255.255.255");
+    //conf adresa server
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sun_family = AF_UNIX;
+    strcpy(server_addr.sun_path, SERVER_PATH);
 
     // DHCP DISCOVER
     DHCP_Message discover;
@@ -59,7 +49,7 @@ int main()
     discover.msg_type = DHCP_DISCOVER;
 
     sendto(sockfd, &discover, sizeof(DHCP_Message), 0,
-           (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
+           (struct sockaddr *)&server_addr, sizeof(server_addr));
 
     printf("[CLIENT] DHCP DISCOVER trimis (xid=%u)\n", discover.header.xid);
 
@@ -90,7 +80,7 @@ int main()
     strcpy(req.offered_ip, offer.offered_ip);
 
     sendto(sockfd, &req, sizeof(req), 0,
-           (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
+           (struct sockaddr *)&server_addr, sizeof(server_addr));
 
     printf("[CLIENT] DHCP REQUEST trimis pentru IP %s\n", req.offered_ip);
 
@@ -117,7 +107,7 @@ int main()
     inform.msg_type = DHCP_INFORM;
 
     sendto(sockfd, &inform, sizeof(inform), 0,
-           (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
+           (struct sockaddr *)&server_addr, sizeof(server_addr));
 
     printf("[CLIENT] DHCP INFORM trimis\n");
 
@@ -131,5 +121,7 @@ int main()
     }
 
     close(sockfd);
+    // Cleanup socket file
+    unlink(my_addr.sun_path);
     return 0;
 }

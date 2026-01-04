@@ -1,6 +1,8 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+#define SERVER_PATH "/tmp/dhcp_server"
+#define CLIENT_PATH_TEMPLATE "/tmp/dhcp_client_%d"
 typedef struct {
     char subnet[16]; //192.168.1.0 
     char netmask[16]; //255.255.255.0

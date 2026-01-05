@@ -5,6 +5,9 @@
 #include <arpa/inet.h>
 #include "dhcp_message.h"
 
+// ======================
+// FUNCȚII EXISTENTE
+// ======================
 
 int allocate_ip(IP_Entry *ip_pool, int pool_size,
                 char *assigned_ip, int default_lease)
@@ -23,7 +26,7 @@ int allocate_ip(IP_Entry *ip_pool, int pool_size,
     return 0;
 }
 
-void send_dhcp_offer(int sockfd, struct sockaddr_in *client_addr,
+void send_dhcp_offer(int sockfd, struct sockaddr *client_addr, socklen_t addr_len,
                      DHCP_Message *discover, DHCP_ipconfig *conf,
                      IP_Entry *ip_pool, int pool_size)
 {
@@ -36,6 +39,9 @@ void send_dhcp_offer(int sockfd, struct sockaddr_in *client_addr,
     offer.header.xid = discover->header.xid;
 
     offer.msg_type = DHCP_OFFER;
+    strcpy(offer.router, conf->router);
+    strcpy(offer.dns, conf->dns);
+    offer.lease_time = conf->default_lease;
 
     // aloc IP
     if (!allocate_ip(ip_pool, pool_size, offer.offered_ip,
@@ -45,26 +51,25 @@ void send_dhcp_offer(int sockfd, struct sockaddr_in *client_addr,
         return;
     }
 
-    strcpy(offer.router, conf->router);
-    strcpy(offer.dns, conf->dns);
-    offer.lease_time = conf->default_lease;
-
     sendto(sockfd, &offer, sizeof(offer), 0,
-           (struct sockaddr *)client_addr, sizeof(*client_addr));
+           client_addr, addr_len);
 
-    printf("[SERVER] DHCP OFFER -> %s\n", offer.offered_ip);
+    printf("[SERVER] DHCP OFFER → %s\n", offer.offered_ip);
 }
 
-void handle_dhcp_discover(int sockfd, struct sockaddr_in *client_addr,
+void handle_dhcp_discover(int sockfd, struct sockaddr *client_addr, socklen_t addr_len,
                           DHCP_Message *discover, DHCP_ipconfig *conf,
                           IP_Entry *ip_pool, int pool_size)
 {
-    send_dhcp_offer(sockfd, client_addr,
+    send_dhcp_offer(sockfd, client_addr, addr_len,
                     discover, conf, ip_pool, pool_size);
 }
 
+// ==========================
+//    DHCP REQUEST
+// ==========================
 
-void handle_dhcp_request(int sockfd, struct sockaddr_in *client_addr,
+void handle_dhcp_request(int sockfd, struct sockaddr *client_addr, socklen_t addr_len,
                          DHCP_Message *request, DHCP_ipconfig *conf,
                          IP_Entry *ip_pool, int pool_size)
 {
@@ -74,21 +79,24 @@ void handle_dhcp_request(int sockfd, struct sockaddr_in *client_addr,
         {
             if (ip_pool[i].allocated == 1)
             {
-                send_dhcp_ack(sockfd, client_addr, request, conf);
+                send_dhcp_ack(sockfd, client_addr, addr_len, request, conf);
             }
             else
             {
-                send_dhcp_nak(sockfd, client_addr, request);
+                send_dhcp_nak(sockfd, client_addr, addr_len, request);
             }
             return;
         }
     }
 
-    send_dhcp_nak(sockfd, client_addr, request);
+    send_dhcp_nak(sockfd, client_addr, addr_len, request);
 }
 
+// ==========================
+//         DHCP ACK
+// ==========================
 
-void send_dhcp_ack(int sockfd, struct sockaddr_in *client_addr,
+void send_dhcp_ack(int sockfd, struct sockaddr *client_addr, socklen_t addr_len,
                    DHCP_Message *req, DHCP_ipconfig *conf)
 {
     DHCP_Message ack;
@@ -107,13 +115,16 @@ void send_dhcp_ack(int sockfd, struct sockaddr_in *client_addr,
     ack.lease_time = conf->default_lease;
 
     sendto(sockfd, &ack, sizeof(ack), 0,
-           (struct sockaddr *)client_addr, sizeof(*client_addr));
+           client_addr, addr_len);
 
-    printf("[SERVER] DHCP ACK -> %s\n", ack.offered_ip);
+    printf("[SERVER] DHCP ACK → %s\n", ack.offered_ip);
 }
 
+// ==========================
+//         DHCP NAK
+// ==========================
 
-void send_dhcp_nak(int sockfd, struct sockaddr_in *client_addr,
+void send_dhcp_nak(int sockfd, struct sockaddr *client_addr, socklen_t addr_len,
                    DHCP_Message *req)
 {
     DHCP_Message nak;
@@ -126,11 +137,14 @@ void send_dhcp_nak(int sockfd, struct sockaddr_in *client_addr,
     nak.msg_type = DHCP_NAK;
 
     sendto(sockfd, &nak, sizeof(nak), 0,
-           (struct sockaddr *)client_addr, sizeof(*client_addr));
+           client_addr, addr_len);
 
     printf("[SERVER] DHCP NAK trimis\n");
 }
 
+// ==========================
+//      DHCP RELEASE
+// ==========================
 
 void handle_dhcp_release(DHCP_Message *msg, IP_Entry *ip_pool,
                          int pool_size)
@@ -148,8 +162,11 @@ void handle_dhcp_release(DHCP_Message *msg, IP_Entry *ip_pool,
     }
 }
 
+// ==========================
+//      DHCP INFORM
+// ==========================
 
-void send_dhcp_ack_inform(int sockfd, struct sockaddr_in *client_addr,
+void send_dhcp_ack_inform(int sockfd, struct sockaddr *client_addr, socklen_t addr_len,
                           DHCP_Message *inform, DHCP_ipconfig *conf)
 {
     DHCP_Message ack;
@@ -165,8 +182,8 @@ void send_dhcp_ack_inform(int sockfd, struct sockaddr_in *client_addr,
     strcpy(ack.dns, conf->dns);
 
     sendto(sockfd, &ack, sizeof(ack), 0,
-           (struct sockaddr *)client_addr, sizeof(*client_addr));
+           client_addr, addr_len);
 
-    printf("[SERVER] DHCP INFORM-ACK -> Router=%s DNS=%s\n",
+    printf("[SERVER] DHCP INFORM-ACK → Router=%s DNS=%s\n",
            ack.router, ack.dns);
 }

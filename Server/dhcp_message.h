@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <arpa/inet.h>
+#include <sys/un.h>
 #include "config.h"
 
 // Codurile pentru tipurile de mesaje DHCP
@@ -48,11 +49,11 @@ typedef struct {
     int lease_time;
 } IP_Entry;
 
-void handle_dhcp_discover(int sockfd, struct sockaddr_in *client_addr,
+void handle_dhcp_discover(int sockfd, struct sockaddr *client_addr, socklen_t addr_len,
                           DHCP_Message *discover, DHCP_ipconfig *conf,
                           IP_Entry *ip_pool, int pool_size);
 
-void send_dhcp_offer(int sockfd, struct sockaddr_in *client_addr,
+void send_dhcp_offer(int sockfd, struct sockaddr *client_addr, socklen_t addr_len,
                      DHCP_Message *discover, DHCP_ipconfig *conf,
                      IP_Entry *ip_pool, int pool_size);
 
@@ -60,20 +61,20 @@ int allocate_ip(IP_Entry *ip_pool, int pool_size,
                 char *assigned_ip, int default_lease);
 
 // === Mesaje suplimentare ===
-void handle_dhcp_request(int sockfd, struct sockaddr_in *client_addr,
+void handle_dhcp_request(int sockfd, struct sockaddr *client_addr, socklen_t addr_len,
                          DHCP_Message *request, DHCP_ipconfig *conf,
                          IP_Entry *ip_pool, int pool_size);
 
-void send_dhcp_ack(int sockfd, struct sockaddr_in *client_addr,
+void send_dhcp_ack(int sockfd, struct sockaddr *client_addr, socklen_t addr_len,
                    DHCP_Message *req, DHCP_ipconfig *conf);
 
-void send_dhcp_nak(int sockfd, struct sockaddr_in *client_addr,
+void send_dhcp_nak(int sockfd, struct sockaddr *client_addr, socklen_t addr_len,
                    DHCP_Message *req);
 
 void handle_dhcp_release(DHCP_Message *msg, IP_Entry *ip_pool,
                          int pool_size);
 
-void send_dhcp_ack_inform(int sockfd, struct sockaddr_in *client_addr,
+void send_dhcp_ack_inform(int sockfd, struct sockaddr *client_addr, socklen_t addr_len,
                           DHCP_Message *inform, DHCP_ipconfig *conf);
 
 #endif

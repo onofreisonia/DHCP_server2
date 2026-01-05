@@ -1,19 +1,22 @@
 CC = gcc
-CFLAGS = -Wall
-SRC = $(wildcard *.c)
-HEADERS = $(wildcard *.h)
-OBJ = $(SRC:.c=.o)
-BIN = client_app
+CFLAGS = -Wall -g -pthread
+LDFLAGS = 
 
-all: $(BIN)
+SRCS = client.c dhcp_message.c client_utils.c
+OBJS = $(SRCS:.c=.o)
 
-$(BIN): $(OBJ)
-	$(CC) $(CFLAGS) -o $@ $^
+all: client_app monitor
 
-%.o: %.c $(HEADERS)
+client_app: $(OBJS)
+	$(CC) $(CFLAGS) -o client_app $(OBJS)
+
+monitor: monitor.c client_utils.c
+	$(CC) $(CFLAGS) -o monitor monitor.c client_utils.c
+
+%.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJ) $(BIN)
+	rm -f $(OBJS) client_app monitor
 
 .PHONY: all clean

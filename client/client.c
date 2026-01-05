@@ -5,31 +5,107 @@
 #include <arpa/inet.h>
 #include <sys/un.h>
 #include <signal.h>
+#include <pthread.h>
+#include <sys/wait.h>
+#include <sys/select.h>
+#include <sys/msg.h> 
+#include <sys/shm.h> 
+#include <sys/sem.h> 
 #include "dhcp_message.h"
+#include "client_utils.h"
 
-// Eliminam porturile, folosim path-uri din config.h
-#define Buffer_size 1024
 
-// Variabile globale pentru signal handler
 int sockfd = -1;
 struct sockaddr_un server_addr;
 struct sockaddr_un my_addr;
-char current_ip[16] = ""; // IP-ul curent alocat
-int has_ip = 0; // Flag daca avem IP
 
-void handle_sigint(int sig)
-{
-    printf("\n[CLIENT] Intrerupere detectata (Signal %d)...\n", sig);
+char current_ip[16] = "";
+int has_ip = 0;
+int lease_time = 0;
 
-    if (has_ip && sockfd != -1)
-    {
-        // Trimitem DHCP RELEASE
+pthread_mutex_t state_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+
+//Utilizat pentru a trimite mesaje de la parinte la copil
+
+int pipe_fd[2]; 
+pid_t child_pid = 0;
+
+
+//Utilizat pentru a trimite mesaje de la copil la parinte
+int msg_queue_id = -1;
+
+
+int shm_id = -1;
+int sem_id = -1;
+ClientState *shm_state = NULL; 
+
+struct log_msg {
+    long mtype;
+    char mtext[256];
+};
+
+
+//Variabila globala pentru a opri thread-urile
+volatile int running = 1;
+
+
+//Thread-uri
+void *input_thread_func(void *arg);
+void *network_thread_func(void *arg);
+void *logger_thread_func(void *arg); // Logger Thread
+void renewal_child_process(int read_fd);
+
+//Semaforuri
+void sem_lock() {
+    struct sembuf sb = {0, -1, 0};
+    semop(sem_id, &sb, 1);
+}
+
+void sem_unlock() {
+    struct sembuf sb = {0, 1, 0};
+    semop(sem_id, &sb, 1);
+}
+
+//Update memorie partajata
+void update_shm_state() {
+    if (shm_state && sem_id != -1) {
+        sem_lock();
+        strcpy(shm_state->current_ip, current_ip);
+        shm_state->has_ip = has_ip;
+        shm_state->lease_time = lease_time;
+        sem_unlock();
+    }
+}
+
+void clean_exit() {
+    if (sockfd != -1) {
+        close(sockfd);
+        cleanup_socket(-1, my_addr.sun_path);
+    }
+    //Sterge coada de mesaje
+    if (msg_queue_id != -1) {
+        msgctl(msg_queue_id, IPC_RMID, NULL);
+    }
+    
+    //Sterge memoria partajata
+    if (shm_state) shmdt(shm_state);
+    
+    //Sterge semaforul
+    if (sem_id != -1) semctl(sem_id, 0, IPC_RMID);
+    if (shm_id != -1) shmctl(shm_id, IPC_RMID, NULL);
+    if (sem_id != -1) semctl(sem_id, 0, IPC_RMID);
+}
+
+void handle_release() {
+    pthread_mutex_lock(&state_mutex);
+    if (has_ip) {
         DHCP_Message release_msg;
         memset(&release_msg, 0, sizeof(release_msg));
         release_msg.header.op = 1;
         release_msg.header.htype = 1;
         release_msg.header.hlen = 6;
-        release_msg.header.xid = rand(); // XID nou
+        release_msg.header.xid = rand();
         release_msg.msg_type = DHCP_RELEASE;
         strcpy(release_msg.offered_ip, current_ip);
 
@@ -37,154 +113,324 @@ void handle_sigint(int sig)
                (struct sockaddr *)&server_addr, sizeof(server_addr));
         
         printf("[CLIENT] DHCP RELEASE trimis pentru IP %s\n", current_ip);
+        
+        //Trimite semnalul de STOP catre copil
+        write(pipe_fd[1], "STOP", 4);
+        
+        has_ip = 0;
+        memset(current_ip, 0, sizeof(current_ip));
+        
+        update_shm_state(); //Actualizeaza memoria partajata
+    } else {
+        printf("[CLIENT] Nu am IP de eliberat.\n");
     }
+    pthread_mutex_unlock(&state_mutex);
+}
 
-    if (sockfd != -1)
-    {
-        close(sockfd);
-        unlink(my_addr.sun_path);
-        printf("[CLIENT] Socket inchis si fisier sters.\n");
-    }
-
+void handle_sigint(int sig) {
+    printf("\n[CLIENT] Intrerupere (Signal %d)...\n", sig);
+    handle_release();
+    clean_exit();
     exit(0);
 }
 
-int main()
-{
-    // struct sockaddr_un server_addr, my_addr; // Mutate global
-    // int sockfd; // Mutat global
-
-    // Configurare signal handling
+int main() {
+  
+   //Gestionarea semnalelor
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = handle_sigint;
     sigaction(SIGINT, &sa, NULL);
 
-    // creez socket-ul unix
-    if ((sockfd = socket(AF_UNIX, SOCK_DGRAM, 0)) < 0)
-    {
-        perror("Eroare la crearea socketului");
-        exit(EXIT_FAILURE);
+    //  Client & Server Init
+    if ((sockfd = create_socket()) < 0) exit(EXIT_FAILURE);
+    if (setup_client(sockfd, &my_addr) < 0) exit(EXIT_FAILURE);
+    setup_server_addr(&server_addr);
+    
+    //Initializare Message Queue
+
+    msg_queue_id = msgget(IPC_PRIVATE, 0666 | IPC_CREAT);
+    if (msg_queue_id == -1) {
+        perror("Eroare msgget");
+        return 1;
     }
+    
+    
+    // Setup memoria partajata si semaforul
+    shm_id = shmget(SHM_KEY, sizeof(ClientState), 0666 | IPC_CREAT);
+    if (shm_id < 0) { perror("shmget"); return 1; }
+    
+    shm_state = (ClientState *)shmat(shm_id, NULL, 0);
+    if (shm_state == (void *)-1) { perror("shmat"); return 1; }
 
-    // configurez  adresa clientului
-    memset(&my_addr, 0, sizeof(my_addr));
-    my_addr.sun_family = AF_UNIX;
-    sprintf(my_addr.sun_path, CLIENT_PATH_TEMPLATE, getpid());
+    sem_id = semget(SEM_KEY, 1, 0666 | IPC_CREAT);
+    if (sem_id < 0) { perror("semget"); return 1; }
+    
+    
+    //Initializare semafor
+    semctl(sem_id, 0, SETVAL, 1);
+    
+    //Initializare memoria partajata
+    update_shm_state();
 
-    unlink(my_addr.sun_path); // Sterg fisierul daca exista
-    if (bind(sockfd, (struct sockaddr *)&my_addr, sizeof(my_addr)) < 0)
-    {
-        perror("Eroare la bind client");
-        close(sockfd);
-        exit(EXIT_FAILURE);
-    }
+    
+    //DHCP Handshake initializare
+    printf("[CLIENT] Pornire DHCP handshake...\n");
+    
+    // DISCOVER
+    DHCP_Message msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.header.op = 1;
+    msg.header.htype = 1;
+    msg.header.hlen = 6;
+    msg.header.xid = rand();
+    msg.msg_type = DHCP_DISCOVER;
 
-    //conf adresa server
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sun_family = AF_UNIX;
-    strcpy(server_addr.sun_path, SERVER_PATH);
-
-    // DHCP DISCOVER
-    DHCP_Message discover;
-    memset(&discover, 0, sizeof(discover));
-    discover.header.op = 1;
-    discover.header.htype = 1;
-    discover.header.hlen = 6;
-    discover.header.xid = rand();
-    discover.msg_type = DHCP_DISCOVER;
-
-    sendto(sockfd, &discover, sizeof(DHCP_Message), 0,
+    sendto(sockfd, &msg, sizeof(DHCP_Message), 0,
            (struct sockaddr *)&server_addr, sizeof(server_addr));
+    printf("[CLIENT] DISCOVER trimis\n");
 
-    printf("[CLIENT] DHCP DISCOVER trimis (xid=%u)\n", discover.header.xid);
-
-    // DHCP OFFER
+    // OFFER
     DHCP_Message offer;
-    int n = recvfrom(sockfd, &offer, sizeof(offer), 0, NULL, NULL);
-
-    if (n < sizeof(DHCP_Message))
-    {
-        printf("[CLIENT] Mesaj prea scurt\n");
-        // Cleanup on exit
-        close(sockfd);
-        unlink(my_addr.sun_path);
-        return 0;
-    }
-    else if (offer.msg_type == DHCP_OFFER)
-    {
-        printf("[CLIENT] DHCP OFFER primit: IP=%s Router=%s DNS=%s\n",
-               offer.offered_ip, offer.router, offer.dns);
+    recvfrom(sockfd, &offer, sizeof(offer), 0, NULL, NULL);
+    if (offer.msg_type == DHCP_OFFER) {
+        printf("[CLIENT] OFFER primit: IP=%s Lease=%d\n", offer.offered_ip, offer.lease_time);
+    } else {
+        printf("[CLIENT] Eroare: Asteptam OFFER, primit altceva.\n");
+        clean_exit();
+        return 1;
     }
 
-    // DHCP REQUEST
+    // REQUEST
     DHCP_Message req;
     memset(&req, 0, sizeof(req));
-    req.header.op = 1;
-    req.header.htype = 1;
-    req.header.hlen = 6;
-    req.header.xid = discover.header.xid;
-
+    req.header.xid = msg.header.xid;
     req.msg_type = DHCP_REQUEST;
     strcpy(req.offered_ip, offer.offered_ip);
-
+    
     sendto(sockfd, &req, sizeof(req), 0,
            (struct sockaddr *)&server_addr, sizeof(server_addr));
+    printf("[CLIENT] REQUEST trimis\n");
 
-    printf("[CLIENT] DHCP REQUEST trimis pentru IP %s\n", req.offered_ip);
-
-    // primire ACK/NAK
-    DHCP_Message ack_msg;
-    n = recvfrom(sockfd, &ack_msg, sizeof(ack_msg), 0, NULL, NULL);
-
-    if (ack_msg.msg_type == DHCP_ACK)
-    {
-        printf("[CLIENT] DHCP ACK -> IP CONFIRMAT: %s\n", ack_msg.offered_ip);
-      
-        strcpy(current_ip, ack_msg.offered_ip);
-        has_ip = 1;
+    // ACK
+    DHCP_Message ack;
+    recvfrom(sockfd, &ack, sizeof(ack), 0, NULL, NULL);
+    if (ack.msg_type == DHCP_ACK) {
+        printf("[CLIENT] ACK primit. IP Confirmat: %s\n", ack.offered_ip);
         
-        printf("[CLIENT] Apasa Ctrl+C pentru a da RELEASE si a iesi...\n");
-        sleep(20); 
+        pthread_mutex_lock(&state_mutex);
+        strcpy(current_ip, ack.offered_ip);
+        lease_time = ack.lease_time;
+        has_ip = 1;
+        pthread_mutex_unlock(&state_mutex);
+        
+        update_shm_state();
+    } else {
+        printf("[CLIENT] NAK primit sau eroare.\n");
+        clean_exit();
+        return 1;
     }
-    else if (ack_msg.msg_type == DHCP_NAK)
-    {
-        printf("[CLIENT] DHCP NAK -> IP REFUZAT\n");
+
+    // Pipe
+    if (pipe(pipe_fd) < 0) {
+        perror("Pipe error");
+        return 1;
     }
 
     
+    //Fork pentru lease renewal
+    child_pid = fork();
+    if (child_pid == 0) {
+       //Proces copil
+        close(pipe_fd[1]); 
+        renewal_child_process(pipe_fd[0]);
+        exit(0);
+    }
+    
+    // Proces Parinte
+    close(pipe_fd[0]);
 
-    if (!has_ip) { //nu avem IP, iesim
-        close(sockfd);
-        unlink(my_addr.sun_path);
-        return 0;
+   
+    //Creare threaduri pentru input, network si logging
+    pthread_t input_th, net_th, log_th;
+    
+    if (pthread_create(&input_th, NULL, input_thread_func, NULL) != 0) {
+        perror("Thread create failed");
+    }
+    if (pthread_create(&net_th, NULL, network_thread_func, NULL) != 0) {
+        perror("Thread create failed");
+    }
+    //Logger thread
+    if (pthread_create(&log_th, NULL, logger_thread_func, NULL) != 0) {
+        perror("Thread create failed");
     }
 
-    //INFORM dupa sleep daca nu s  dat Ctrl+C
-    DHCP_Message inform;
-    memset(&inform, 0, sizeof(inform));
-    inform.header.op = 1;
-    inform.header.htype = 1;
-    inform.header.hlen = 6;
-    inform.header.xid = rand();
-    inform.msg_type = DHCP_INFORM;
+  
+    pthread_join(input_th, NULL);
+    
+    // Cleanup
+    running = 0;
+    
+ 
+    struct log_msg quit_msg;
+    quit_msg.mtype = 2; 
+    strcpy(quit_msg.mtext, "QUIT");
+    msgsnd(msg_queue_id, &quit_msg, sizeof(quit_msg.mtext), 0);
+    pthread_join(log_th, NULL);
 
-    sendto(sockfd, &inform, sizeof(inform), 0,
-           (struct sockaddr *)&server_addr, sizeof(server_addr));
-
-    printf("[CLIENT] DHCP INFORM trimis\n");
-
-    DHCP_Message inform_ack;
-    recvfrom(sockfd, &inform_ack, sizeof(inform_ack), 0, NULL, NULL);
-
-    if (inform_ack.msg_type == DHCP_ACK)
-    {
-        printf("[CLIENT] DHCP INFORM-ACK primit: Router=%s DNS=%s\n",
-               inform_ack.router, inform_ack.dns);
-    }
-
-    close(sockfd);
-    // Cleanup socket file
-    unlink(my_addr.sun_path);
+    pthread_detach(net_th); 
+    kill(child_pid, SIGTERM);
+    wait(NULL);
+    
+    clean_exit();
     return 0;
+}
+
+
+// Input (Interactive)
+void *input_thread_func(void *arg) {
+    char buffer[256];
+    printf("\n[CLIENT-Input] Comenzi disponibile: status, release, exit\n");
+
+    while (running) {
+       
+        
+        
+        if (fgets(buffer, sizeof(buffer), stdin) == NULL) break;
+        buffer[strcspn(buffer, "\n")] = 0;
+
+        if (strcmp(buffer, "status") == 0) {
+            pthread_mutex_lock(&state_mutex);
+            if (has_ip) {
+                printf("[STATUS] IP: %s | Lease: %d sec\n", current_ip, lease_time);
+            } else {
+                printf("[STATUS] Niciun IP alocat.\n");
+            }
+            pthread_mutex_unlock(&state_mutex);
+        }
+        else if (strcmp(buffer, "release") == 0) {
+            handle_release();
+        }
+        else if (strcmp(buffer, "exit") == 0) {
+            handle_release();
+            running = 0;
+            break;
+        }
+        else {
+            if (strlen(buffer) > 0)
+                printf("Comanda necunoscuta.\n");
+        }
+    }
+    return NULL;
+}
+
+
+// Network Receiver
+
+void *network_thread_func(void *arg) {
+    DHCP_Message msg;
+    while (running) {
+        int n = recvfrom(sockfd, &msg, sizeof(msg), 0, NULL, NULL);
+        if (n <= 0) continue;
+
+        if (msg.msg_type == DHCP_ACK) {
+            printf("\n[CLIENT-Net] ACK primit (Renew/Inform). IP: %s\n", msg.offered_ip);
+                       
+            pthread_mutex_lock(&state_mutex);
+            if (strcmp(msg.offered_ip, current_ip) == 0) {
+                lease_time = msg.lease_time; 
+            }
+            pthread_mutex_unlock(&state_mutex);
+            
+            update_shm_state(); 
+
+        } else if (msg.msg_type == DHCP_NAK) {
+            printf("\n[CLIENT-Net] NAK primit! IP invalidat.\n");
+            
+            pthread_mutex_lock(&state_mutex);
+            has_ip = 0;
+            memset(current_ip, 0, sizeof(current_ip));
+            write(pipe_fd[1], "STOP", 4);
+            pthread_mutex_unlock(&state_mutex);
+            
+            update_shm_state();
+        }
+    }
+    return NULL;
+}
+
+
+// Logger 
+
+void *logger_thread_func(void *arg) {
+    struct log_msg msg;
+    while (running) {
+        // msgrcv este blocant
+        if (msgrcv(msg_queue_id, &msg, sizeof(msg.mtext), 0, 0) == -1) {
+            if (!running) break;
+            perror("msgrcv");
+            break;
+        }
+        
+        if (strcmp(msg.mtext, "QUIT") == 0) {
+            break;
+        }
+
+        printf("[CLIENT-Logger] %s\n", msg.mtext);
+    }
+    return NULL;
+}
+
+
+// Lease Renewal 
+
+void renewal_child_process(int read_fd) {
+    // Trimitem log-uri prin Message Queue
+    struct log_msg msg;
+    msg.mtype = 1;
+    sprintf(msg.mtext, "Copil (PID %d) a pornit. Monitorizeaza timpul de leasing...", getpid());
+    msgsnd(msg_queue_id, &msg, sizeof(msg.mtext), 0);
+
+    while (1) {
+        int sleep_time = 10; 
+        
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(read_fd, &fds);
+        
+        struct timeval tv;
+        tv.tv_sec = sleep_time;
+        tv.tv_usec = 0;
+
+        int ret = select(read_fd + 1, &fds, NULL, NULL, &tv);
+        
+        if (ret > 0) {
+            //ceva pe pipe -> STOP
+            memset(&msg, 0, sizeof(msg));
+            msg.mtype = 1;
+            strcpy(msg.mtext, "Semnal STOP via Pipe. Copilul iese.");
+            msgsnd(msg_queue_id, &msg, sizeof(msg.mtext), 0);
+            break;
+        } else if (ret == 0) {
+            // Timeout -> RENEW
+            memset(&msg, 0, sizeof(msg));
+            msg.mtype = 1;
+            strcpy(msg.mtext, "Half-time lease a expirat! Trimitem RENEW request...");
+            msgsnd(msg_queue_id, &msg, sizeof(msg.mtext), 0);
+            
+            if (strlen(current_ip) > 0) {
+                DHCP_Message renew_req;
+                memset(&renew_req, 0, sizeof(renew_req));
+                renew_req.header.op = 1; 
+                renew_req.header.htype = 1;
+                renew_req.header.hlen = 6;
+                renew_req.header.xid = rand();
+                renew_req.msg_type = DHCP_REQUEST;
+                strcpy(renew_req.offered_ip, current_ip);
+                
+                sendto(sockfd, &renew_req, sizeof(renew_req), 0, 
+                       (struct sockaddr *)&server_addr, sizeof(server_addr));
+            }
+        }
+    }
 }

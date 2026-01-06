@@ -147,7 +147,7 @@ void handle_signal(int sig) {
 }
 
 int main() {
-    srand(time(NULL)); // Seed pentru random
+    srand(time(NULL) ^ getpid()); // Seed cu PID pentru unicitate in simulare multi-client
 
    //Gestionarea semnalelor
     struct sigaction sa;

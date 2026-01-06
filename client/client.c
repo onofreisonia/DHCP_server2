@@ -97,6 +97,18 @@ void clean_exit() {
     if (sem_id != -1) semctl(sem_id, 0, IPC_RMID);
 }
 
+#define SIMULATE_ERRORS 1
+#define ERROR_RATE 20 // 20% sanse de eroare
+
+int should_simulate_error() {
+#ifdef SIMULATE_ERRORS
+    if ((rand() % 100) < ERROR_RATE) {
+        return 1;
+    }
+#endif
+    return 0;
+}
+
 void handle_release() {
     pthread_mutex_lock(&state_mutex);
     if (has_ip) {
@@ -127,7 +139,7 @@ void handle_release() {
     pthread_mutex_unlock(&state_mutex);
 }
 
-void handle_sigint(int sig) {
+void handle_signal(int sig) {
     printf("\n[CLIENT] Intrerupere (Signal %d)...\n", sig);
     handle_release();
     clean_exit();
@@ -135,15 +147,26 @@ void handle_sigint(int sig) {
 }
 
 int main() {
-  
+    srand(time(NULL)); // Seed pentru random
+
    //Gestionarea semnalelor
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = handle_sigint;
+    sa.sa_handler = handle_signal;
     sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
 
     //  Client & Server Init
     if ((sockfd = create_socket()) < 0) exit(EXIT_FAILURE);
+    
+    // Setare Timeout la receptie (pentru a nu bloca la simulare eroare)
+    struct timeval tv;
+    tv.tv_sec = 2;  // 2 secunde timeout
+    tv.tv_usec = 0;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+        perror("Eroare setare timeout socket");
+    }
+
     if (setup_client(sockfd, &my_addr) < 0) exit(EXIT_FAILURE);
     setup_server_addr(&server_addr);
     
@@ -192,13 +215,28 @@ int main() {
 
     // OFFER
     DHCP_Message offer;
-    recvfrom(sockfd, &offer, sizeof(offer), 0, NULL, NULL);
-    if (offer.msg_type == DHCP_OFFER) {
-        printf("[CLIENT] OFFER primit: IP=%s Lease=%d\n", offer.offered_ip, offer.lease_time);
-    } else {
-        printf("[CLIENT] Eroare: Asteptam OFFER, primit altceva.\n");
-        clean_exit();
-        return 1;
+    while(1) {
+        int n = recvfrom(sockfd, &offer, sizeof(offer), 0, NULL, NULL);
+        if (n < 0) {
+            printf("[CLIENT] Timeout asteptare OFFER. Retrimit DISCOVER...\n");
+            // Retrimitem DISCOVER
+            msg.header.xid = rand();
+            sendto(sockfd, &msg, sizeof(DHCP_Message), 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+            continue;
+        }
+        
+        // Simulare pierdere pachet
+        if (should_simulate_error()) {
+             printf("[SIMULARE] OFFER pierdut/ignorat. Astept retransmisie sau timeout...\n");
+             continue;
+        }
+
+        if (offer.msg_type == DHCP_OFFER) {
+            printf("[CLIENT] OFFER primit: IP=%s Lease=%d\n", offer.offered_ip, offer.lease_time);
+            break; 
+        } else {
+             printf("[CLIENT] Mesaj ignorat (asteptam OFFER).\n");
+        }
     }
 
     // REQUEST
@@ -214,21 +252,36 @@ int main() {
 
     // ACK
     DHCP_Message ack;
-    recvfrom(sockfd, &ack, sizeof(ack), 0, NULL, NULL);
-    if (ack.msg_type == DHCP_ACK) {
-        printf("[CLIENT] ACK primit. IP Confirmat: %s\n", ack.offered_ip);
-        
-        pthread_mutex_lock(&state_mutex);
-        strcpy(current_ip, ack.offered_ip);
-        lease_time = ack.lease_time;
-        has_ip = 1;
-        pthread_mutex_unlock(&state_mutex);
-        
-        update_shm_state();
-    } else {
-        printf("[CLIENT] NAK primit sau eroare.\n");
-        clean_exit();
-        return 1;
+    while(1) {
+        int n = recvfrom(sockfd, &ack, sizeof(ack), 0, NULL, NULL);
+         if (n < 0) {
+            printf("[CLIENT] Timeout asteptare ACK. Retrimit REQUEST...\n");
+            // Retrimitem REQUEST
+            sendto(sockfd, &req, sizeof(DHCP_Message), 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+            continue;
+        }
+
+        if (should_simulate_error()) {
+             printf("[SIMULARE] ACK pierdut/ignorat. Astept retransmisie sau timeout...\n");
+             continue;
+        }
+
+        if (ack.msg_type == DHCP_ACK) {
+            printf("[CLIENT] ACK primit. IP Confirmat: %s\n", ack.offered_ip);
+            
+            pthread_mutex_lock(&state_mutex);
+            strcpy(current_ip, ack.offered_ip);
+            lease_time = ack.lease_time;
+            has_ip = 1;
+            pthread_mutex_unlock(&state_mutex);
+            
+            update_shm_state();
+            break; 
+        } else if (ack.msg_type == DHCP_NAK) {
+            printf("[CLIENT] NAK primit. Configurare esuata.\n");
+            clean_exit();
+            return 1;
+        }
     }
 
     // Pipe
@@ -332,6 +385,12 @@ void *network_thread_func(void *arg) {
     while (running) {
         int n = recvfrom(sockfd, &msg, sizeof(msg), 0, NULL, NULL);
         if (n <= 0) continue;
+
+        // Simulare eroare (pieridere pachet la receptie)
+        if (should_simulate_error()) {
+            printf("\n[SIMULARE] Pachet pierdut/ignorat (Risc eroare %d%%)!\n", ERROR_RATE);
+            continue;
+        }
 
         if (msg.msg_type == DHCP_ACK) {
             printf("\n[CLIENT-Net] ACK primit (Renew/Inform). IP: %s\n", msg.offered_ip);

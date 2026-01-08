@@ -1,0 +1,40 @@
+[SERVER] 2 Leases incarcate din leases.txt
+Server DHCP pornit (Unix Sockets & Multithreading).
+Server asculta pe socket-ul: server_sock
+[CLEANER] Thread de curatare pornit.
+[THREAD 139695123580480] DISCOVER primit (xid=1187999545)
+[SERVER] DHCP OFFER → 192.168.1.10
+[SERVER] Leases salvate in leases.txt (Text Format)
+[THREAD 139695115187776] REQUEST primit
+[SERVER] DHCP ACK → 192.168.1.10
+[SERVER] Leases salvate in leases.txt (Text Format)
+[THREAD 139695115187776] RELEASE primit
+[SERVER] IP 192.168.1.10 eliberat
+[SERVER] Leases salvate in leases.txt (Text Format)
+[THREAD 139695115187776] DISCOVER primit (xid=436763606)
+[SERVER] DHCP OFFER → 192.168.1.10
+[SERVER] Leases salvate in leases.txt (Text Format)
+[THREAD 139695123580480] REQUEST primit
+[SERVER] DHCP ACK → 192.168.1.10
+[SERVER] Leases salvate in leases.txt (Text Format)
+[THREAD 139695123580480] RELEASE primit
+[SERVER] IP 192.168.1.10 eliberat
+[SERVER] Leases salvate in leases.txt (Text Format)
+[THREAD 139695123580480] DISCOVER primit (xid=524952454)
+[SERVER] DHCP OFFER → 192.168.1.10
+[SERVER] Leases salvate in leases.txt (Text Format)
+[THREAD 139695115187776] REQUEST primit
+[SERVER] DHCP ACK → 192.168.1.10
+[SERVER] Leases salvate in leases.txt (Text Format)
+[THREAD 139695115187776] RELEASE primit
+[SERVER] IP 192.168.1.10 eliberat
+[SERVER] Leases salvate in leases.txt (Text Format)
+[CLEANER] IP 192.168.1.11 expirat. Eliberare automata.
+[CLEANER] IP 192.168.1.14 expirat. Eliberare automata.
+[SERVER] Leases salvate in leases.txt (Text Format)
+
+[SERVER] Semnal 2 primit. Oprire server...
+[SERVER] Inchidere curata...
+[CLEANER] Oprire thread.
+[SERVER] Leases salvate in leases.txt (Text Format)
+[SERVER] La revedere!

@@ -1,7 +1,6 @@
 #ifndef CONFIG_H
 #define CONFIG_H
-// The client uses "server_sock" in the local directory (relative path).
-// We update this to match the client's expectation.
+
 #define SERVER_PATH "server_sock"
 #define CLIENT_PATH_TEMPLATE "client_sock_%d"
 typedef struct {

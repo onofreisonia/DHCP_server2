@@ -1,16 +1,20 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <signal.h>
 #include <arpa/inet.h>
 #include <sys/un.h>
-#include <signal.h>
 #include <pthread.h>
 #include <sys/wait.h>
 #include <sys/select.h>
 #include <sys/msg.h> 
 #include <sys/shm.h> 
 #include <sys/sem.h> 
+#include <time.h>
 #include "dhcp_message.h"
 #include "client_utils.h"
 

@@ -32,7 +32,7 @@ int create_socket() {
 int setup_client(int sockfd, struct sockaddr_in *my_addr) {
     memset(my_addr, 0, sizeof(*my_addr));
     my_addr->sin_family = AF_INET;
-    my_addr->sin_port = htons(CLIENT_PORT);
+    my_addr->sin_port = htons(0); // Use ephemeral port to avoid conflicts on localhost
     my_addr->sin_addr.s_addr = htonl(INADDR_ANY);
 
     if (bind(sockfd, (struct sockaddr *)my_addr, sizeof(*my_addr)) < 0) {

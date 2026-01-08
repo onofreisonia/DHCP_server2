@@ -10,6 +10,7 @@
 #include <semaphore.h>
 #include <signal.h>
 #include <time.h>
+#include <sys/time.h>
 #include "config.h"
 #include "dhcp_message.h"
 
@@ -178,7 +179,7 @@ int main()
     // IP Pool Init
     IP_Entry ip_pool[POOL_SIZE];
     struct in_addr base_ip;
-    inet_aton(configuratie.range_start, &base_ip);
+    inet_pton(AF_INET, configuratie.range_start, &base_ip);
     
     // Initialize pool structures first
     for (int i = 0; i < POOL_SIZE; i++)

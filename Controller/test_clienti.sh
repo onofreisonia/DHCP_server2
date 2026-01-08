@@ -1,9 +1,9 @@
-#!/bin/bash
+
 
 cd "$(dirname "$0")/.." || exit
 
 echo "--- Re-compilare proiect ---"
-make clean && make
+make clean && make CFLAGS="-D_POSIX_C_SOURCE=200809L -Wall -g -pthread -I./Model -I./Service -I./View -I./Common -DSIMULATE_ERRORS=0"
 
 echo "--- Pornire simulare 3 clienti simultani ---"
 # Pornim 3 clienti in background

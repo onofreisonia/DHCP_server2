@@ -110,7 +110,10 @@ void clean_exit() {
     
 }
 
+#ifndef SIMULATE_ERRORS
 #define SIMULATE_ERRORS 1
+#endif
+
 #define ERROR_RATE 20 // 20% sanse de eroare
 
 int should_simulate_error() {

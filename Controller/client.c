@@ -437,15 +437,19 @@ void *network_thread_func(void *arg) {
         }
 
         if (msg.msg_type == DHCP_ACK) {
-            printf("\n[CLIENT-Net] ACK primit (Renew/Inform). IP: %s\n", msg.offered_ip);
-                       
+            
             pthread_mutex_lock(&state_mutex);
-            if (strcmp(msg.offered_ip, current_ip) == 0) {
-                lease_time = msg.lease_time; 
+            int is_my_ip = (strcmp(msg.offered_ip, current_ip) == 0);
+            if (is_my_ip) {
+                 lease_time = msg.lease_time; 
             }
             pthread_mutex_unlock(&state_mutex);
             
-            update_shm_state(); 
+            // Fix: Do not log ACKs for other clients to avoid confusion
+            if (is_my_ip) {
+                printf("\n[CLIENT-Net] ACK primit (Renew/Inform). IP: %s\n", msg.offered_ip);
+                update_shm_state(); 
+            }
 
         } else if (msg.msg_type == DHCP_NAK) {
             printf("\n[CLIENT-Net] NAK primit! IP invalidat.\n");

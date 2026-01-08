@@ -15,8 +15,8 @@
 #include <sys/shm.h> 
 #include <sys/sem.h> 
 #include <time.h>
-#include "dhcp_message.h"
-#include "client_utils.h"
+#include "../Model/dhcp_message.h"
+#include "../Service/client_utils.h"
 
 int sockfd = -1;
 struct sockaddr_in server_addr;
@@ -91,7 +91,7 @@ void clean_exit() {
         close(sockfd);
         cleanup_socket(-1, NULL);
         char marker_file[256];
-        sprintf(marker_file, "client_sock_%d", getpid());
+        sprintf(marker_file, "Logs/client_sock_%d", getpid());
         unlink(marker_file);
     }
     //Sterge coada de mesaje
@@ -171,7 +171,7 @@ int main() {
 
     // Marker file for Monitor discovery (compatibility with existing monitor)
     char marker_file[256];
-    sprintf(marker_file, "client_sock_%d", getpid());
+    sprintf(marker_file, "Logs/client_sock_%d", getpid());
     FILE *fp = fopen(marker_file, "w");
     if (fp) fclose(fp);
 

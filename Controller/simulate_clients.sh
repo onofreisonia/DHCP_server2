@@ -3,15 +3,7 @@
 # Numarul de clienti de simulat
 NUM_CLIENTS=3
 
-echo "=== [SIMULATION] Building Client ==="
-
-echo "=== [SIMULATION] Building Client ==="
-make -C .
-
-if [ $? -ne 0 ]; then
-    echo "Eroare la compilare!"
-    exit 1
-fi
+# Skip build, assuming global make was run
 
 echo "=== [SIMULATION] Initializare... ==="
 
@@ -24,14 +16,14 @@ do
     echo "  -> Pornire Client #$i"
     # Pornim clientul in background si ii dam input "exit" 
     # Pentru test, le lasam sa ruleze.
-    ./client_app > "client_$i.log" 2>&1 &
+    ./client_app > "Logs/client_$i.log" 2>&1 &
     pids="$pids $!"
     sleep 1 
 done
 
 echo "=== [SIMULATION] Clientii ruleaza in background. ==="
 echo "PID-uri: $pids"
-echo "Log-urile sunt salvate in client_X.log"
+echo "Log-urile sunt salvate in Logs/client_X.log"
 echo "Apasa ENTER pentru a opri toti clientii..."
 
 read

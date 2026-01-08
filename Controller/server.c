@@ -166,9 +166,9 @@ int main()
 
     DHCP_ipconfig configuratie;
     
-    if (load_config("ipconfig.txt", &configuratie) == -1) // Assuming running from root or check Server/
+    if (load_config("Model/ipconfig.txt", &configuratie) == -1) // Assuming running from root
     {
-         if (load_config("Server/ipconfig.txt", &configuratie) == -1) 
+         if (load_config("ipconfig.txt", &configuratie) == -1) 
         {
             fprintf(stderr, "Nu s-a incarcat configuratia serverului\n");
             return 1;

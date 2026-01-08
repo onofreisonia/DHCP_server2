@@ -46,7 +46,7 @@ int main() {
 
         DIR *d;
         struct dirent *dir;
-        d = opendir(".");
+        d = opendir("Logs");
         int found = 0;
 
         if (d) {

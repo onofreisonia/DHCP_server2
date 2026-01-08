@@ -1,0 +1,16 @@
+[CLIENT] Pornire DHCP handshake...
+[CLIENT] DISCOVER trimis
+[CLIENT] OFFER primit: IP=192.168.1.12 Lease=600
+[CLIENT] REQUEST trimis
+[CLIENT] ACK primit. IP Confirmat: 192.168.1.12
+
+[CLIENT] Intrerupere (Signal 15)...
+[CLIENT] DHCP RELEASE trimis pentru IP 192.168.1.12
+[CLIENT] Pornire DHCP handshake...
+[CLIENT] DISCOVER trimis
+[CLIENT] OFFER primit: IP=192.168.1.12 Lease=600
+[CLIENT] REQUEST trimis
+[CLIENT] ACK primit. IP Confirmat: 192.168.1.12
+
+[CLIENT-Input] Comenzi disponibile: status, release, exit
+[CLIENT-Logger] Copil (PID 7049) a pornit. Monitorizeaza timpul de leasing...

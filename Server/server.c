@@ -2,10 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/un.h>
 #include <pthread.h>
 #include <semaphore.h>
 #include <signal.h>
@@ -24,7 +24,7 @@ volatile int running = 1;
 typedef struct 
 {
     int sockfd;
-    struct sockaddr_un client_addr;
+    struct sockaddr_in client_addr;
     socklen_t addr_len;
     DHCP_Message msg;
     DHCP_ipconfig *config;
@@ -194,12 +194,12 @@ int main()
     // Load persisted state if available
     load_leases(ip_pool);
 
-    printf("Server DHCP pornit (Unix Sockets & Multithreading).\n");
+    printf("Server DHCP pornit (INET Sockets & Multithreading).\n");
     int sockfd;
-    struct sockaddr_un server_addr, client_addr;
+    struct sockaddr_in server_addr, client_addr;
     socklen_t addr_len = sizeof(client_addr);
     
-    if ((sockfd = socket(AF_UNIX, SOCK_DGRAM, 0)) < 0)
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
     {
         perror("Eroare la crearea socketului server");
         exit(EXIT_FAILURE);
@@ -212,9 +212,9 @@ int main()
     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sun_family = AF_UNIX;
-    strncpy(server_addr.sun_path, SERVER_PATH, sizeof(server_addr.sun_path) - 1);
-    unlink(SERVER_PATH);
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(SERVER_PORT);
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     
     if (bind(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
     {
@@ -222,7 +222,7 @@ int main()
         close(sockfd);
         exit(EXIT_FAILURE);
     }
-    printf("Server asculta pe socket-ul: %s\n", SERVER_PATH);
+    printf("Server asculta pe portul: %d\n", SERVER_PORT);
 
     if (sem_init(&thread_sem, 0, MAX_THREADS) != 0) {
         perror("Eroare initializare semafor");
@@ -294,7 +294,7 @@ int main()
     save_leases(ip_pool); // Final save
 
     close(sockfd);
-    unlink(SERVER_PATH);
+    // Unlink removed for INET sockets
     sem_destroy(&thread_sem);
     pthread_mutex_destroy(&pool_mutex);
     

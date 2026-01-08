@@ -5,15 +5,15 @@ NUM_CLIENTS=3
 
 echo "=== [SIMULATION] Building Client ==="
 
-gcc -Wall -g -pthread -o client_app client.c dhcp_message.c client_utils.c
+echo "=== [SIMULATION] Building Client ==="
+make -C .
 
 if [ $? -ne 0 ]; then
     echo "Eroare la compilare!"
     exit 1
 fi
 
-echo "=== [SIMULATION] Curatare socket-uri vechi ==="
-rm -f /tmp/dhcp_client_*
+echo "=== [SIMULATION] Initializare... ==="
 
 echo "=== [SIMULATION] Pornire $NUM_CLIENTS Clienti... ==="
 

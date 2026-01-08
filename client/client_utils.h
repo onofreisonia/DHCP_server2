@@ -1,8 +1,9 @@
 #ifndef CLIENT_UTILS_H
 #define CLIENT_UTILS_H
 
-#include <sys/un.h>
+#include <netinet/in.h>
 #include <arpa/inet.h>
+#include <pthread.h>
 #include "config.h"
 
 // Keys for IPC
@@ -14,20 +15,20 @@ typedef struct {
     char current_ip[16];
     int has_ip;
     int lease_time;
-    
+    pthread_mutex_t mutex;
 } ClientState;
 
-// Initializeaza socket-ul UDP/Unix
+// Initializeaza socket-ul UDP/INET
 int create_socket();
 
 // Configureaza adresa clientului si face bind
 // Returneaza 0 la succes, -1 la eroare
-int setup_client(int sockfd, struct sockaddr_un *my_addr);
+int setup_client(int sockfd, struct sockaddr_in *my_addr);
 
 // Configureaza adresa serverului
-void setup_server_addr(struct sockaddr_un *server_addr);
+void setup_server_addr(struct sockaddr_in *server_addr);
 
-// Helper pentru sters fisierul socket
+// Helper pentru sters fisierul socket (pastrat pt compatibilitate, dar gol)
 void cleanup_socket(int sockfd, const char *path);
 
 #endif

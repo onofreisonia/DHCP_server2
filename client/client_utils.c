@@ -3,24 +3,38 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
-#include <sys/un.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include "client_utils.h"
 
 int create_socket() {
     int sockfd;
-    if ((sockfd = socket(AF_UNIX, SOCK_DGRAM, 0)) < 0) {
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
         perror("Eroare la crearea socketului");
         return -1;
     }
+    
+    int broadcast = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof(broadcast)) < 0) {
+        perror("Eroare setsockopt BROADCAST");
+        return -1;
+    }
+
+    int reuse = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+        perror("Eroare setsockopt REUSEADDR");
+        return -1;
+    }
+
     return sockfd;
 }
 
-int setup_client(int sockfd, struct sockaddr_un *my_addr) {
+int setup_client(int sockfd, struct sockaddr_in *my_addr) {
     memset(my_addr, 0, sizeof(*my_addr));
-    my_addr->sun_family = AF_UNIX;
-    sprintf(my_addr->sun_path, CLIENT_PATH_TEMPLATE, getpid());
+    my_addr->sin_family = AF_INET;
+    my_addr->sin_port = htons(CLIENT_PORT);
+    my_addr->sin_addr.s_addr = htonl(INADDR_ANY);
 
-    unlink(my_addr->sun_path); // Sterge daca exista
     if (bind(sockfd, (struct sockaddr *)my_addr, sizeof(*my_addr)) < 0) {
         perror("Eroare la bind client");
         return -1;
@@ -28,17 +42,16 @@ int setup_client(int sockfd, struct sockaddr_un *my_addr) {
     return 0;
 }
 
-void setup_server_addr(struct sockaddr_un *server_addr) {
+void setup_server_addr(struct sockaddr_in *server_addr) {
     memset(server_addr, 0, sizeof(*server_addr));
-    server_addr->sun_family = AF_UNIX;
-    strcpy(server_addr->sun_path, SERVER_PATH);
+    server_addr->sin_family = AF_INET;
+    server_addr->sin_port = htons(SERVER_PORT);
+    server_addr->sin_addr.s_addr = htonl(INADDR_BROADCAST); // Trimitem la Broadcast
 }
 
 void cleanup_socket(int sockfd, const char *path) {
     if (sockfd >= 0) {
         close(sockfd);
     }
-    if (path && strlen(path) > 0) {
-        unlink(path);
-    }
+    // Nu mai stergem fisiere
 }

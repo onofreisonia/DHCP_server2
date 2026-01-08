@@ -1,13 +1,13 @@
 #define _POSIX_C_SOURCE 200809L
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <sys/types.h>
 #include <signal.h>
-#include <arpa/inet.h>
-#include <sys/un.h>
 #include <pthread.h>
 #include <sys/wait.h>
 #include <sys/select.h>
@@ -18,10 +18,9 @@
 #include "dhcp_message.h"
 #include "client_utils.h"
 
-
 int sockfd = -1;
-struct sockaddr_un server_addr;
-struct sockaddr_un my_addr;
+struct sockaddr_in server_addr;
+struct sockaddr_in my_addr;
 
 char current_ip[16] = "";
 int has_ip = 0;
@@ -31,7 +30,6 @@ pthread_mutex_t state_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 
 //Utilizat pentru a trimite mesaje de la parinte la copil
-
 int pipe_fd[2]; 
 pid_t child_pid = 0;
 
@@ -74,10 +72,16 @@ void sem_unlock() {
 //Update memorie partajata
 void update_shm_state() {
     if (shm_state && sem_id != -1) {
+        // Protectie dubla: Semafor Binar (1) + Mutex
+        // Semaforul asigura accesul la SHM, Mutex-ul protejeaza structura interna
         sem_lock();
+        pthread_mutex_lock(&shm_state->mutex);
+        
         strcpy(shm_state->current_ip, current_ip);
         shm_state->has_ip = has_ip;
         shm_state->lease_time = lease_time;
+        
+        pthread_mutex_unlock(&shm_state->mutex);
         sem_unlock();
     }
 }
@@ -85,7 +89,10 @@ void update_shm_state() {
 void clean_exit() {
     if (sockfd != -1) {
         close(sockfd);
-        cleanup_socket(-1, my_addr.sun_path);
+        cleanup_socket(-1, NULL);
+        char marker_file[256];
+        sprintf(marker_file, "client_sock_%d", getpid());
+        unlink(marker_file);
     }
     //Sterge coada de mesaje
     if (msg_queue_id != -1) {
@@ -96,9 +103,11 @@ void clean_exit() {
     if (shm_state) shmdt(shm_state);
     
     //Sterge semaforul
-    if (sem_id != -1) semctl(sem_id, 0, IPC_RMID);
-    if (shm_id != -1) shmctl(shm_id, IPC_RMID, NULL);
-    if (sem_id != -1) semctl(sem_id, 0, IPC_RMID);
+    if (sem_id != -1) 
+        semctl(sem_id, 0, IPC_RMID);
+    if (shm_id != -1) 
+        shmctl(shm_id, IPC_RMID, NULL);
+    
 }
 
 #define SIMULATE_ERRORS 1
@@ -160,6 +169,12 @@ int main() {
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
 
+    // Marker file for Monitor discovery (compatibility with existing monitor)
+    char marker_file[256];
+    sprintf(marker_file, "client_sock_%d", getpid());
+    FILE *fp = fopen(marker_file, "w");
+    if (fp) fclose(fp);
+
     //  Client & Server Init
     if ((sockfd = create_socket()) < 0) exit(EXIT_FAILURE);
     
@@ -184,18 +199,29 @@ int main() {
     
     
     // Setup memoria partajata si semaforul
-    shm_id = shmget(SHM_KEY, sizeof(ClientState), 0666 | IPC_CREAT);
+    // Revenim la PID keys pentru a putea monitoriza mai multi clienti
+    key_t shm_key = (key_t)getpid();
+    key_t sem_key = (key_t)getpid();
+    
+    shm_id = shmget(shm_key, sizeof(ClientState), 0666 | IPC_CREAT);
     if (shm_id < 0) { perror("shmget"); return 1; }
     
     shm_state = (ClientState *)shmat(shm_id, NULL, 0);
     if (shm_state == (void *)-1) { perror("shmat"); return 1; }
 
-    sem_id = semget(SEM_KEY, 1, 0666 | IPC_CREAT);
+    sem_id = semget(sem_key, 1, 0666 | IPC_CREAT);
     if (sem_id < 0) { perror("semget"); return 1; }
     
     
-    //Initializare semafor
+    //Initializare SEMAFOR cu valoarea 1 (Binar)
     semctl(sem_id, 0, SETVAL, 1);
+    
+    //Initializare MUTEX (Shared intre procese)
+    pthread_mutexattr_t mattr;
+    pthread_mutexattr_init(&mattr);
+    pthread_mutexattr_setpshared(&mattr, PTHREAD_PROCESS_SHARED);
+    pthread_mutex_init(&shm_state->mutex, &mattr);
+    pthread_mutexattr_destroy(&mattr);
     
     //Initializare memoria partajata
     update_shm_state();
@@ -236,6 +262,10 @@ int main() {
         }
 
         if (offer.msg_type == DHCP_OFFER) {
+            if (offer.header.xid != msg.header.xid) {
+                // Ignore messages for other clients
+                continue;
+            }
             printf("[CLIENT] OFFER primit: IP=%s Lease=%d\n", offer.offered_ip, offer.lease_time);
             break; 
         } else {
@@ -271,6 +301,9 @@ int main() {
         }
 
         if (ack.msg_type == DHCP_ACK) {
+             if (ack.header.xid != req.header.xid) {
+                continue;
+            }
             printf("[CLIENT] ACK primit. IP Confirmat: %s\n", ack.offered_ip);
             
             pthread_mutex_lock(&state_mutex);
@@ -282,6 +315,9 @@ int main() {
             update_shm_state();
             break; 
         } else if (ack.msg_type == DHCP_NAK) {
+             if (ack.header.xid != req.header.xid) {
+                continue;
+            }
             printf("[CLIENT] NAK primit. Configurare esuata.\n");
             clean_exit();
             return 1;
@@ -353,7 +389,11 @@ void *input_thread_func(void *arg) {
        
         
         
-        if (fgets(buffer, sizeof(buffer), stdin) == NULL) break;
+        if (fgets(buffer, sizeof(buffer), stdin) == NULL) 
+        {   // EOF (Background mode) -> Keep thread alive but idle
+            while(running) sleep(1);
+            break;
+        }
         buffer[strcspn(buffer, "\n")] = 0;
 
         if (strcmp(buffer, "status") == 0) {

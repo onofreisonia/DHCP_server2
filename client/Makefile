@@ -1,8 +1,8 @@
 CC = gcc
-CFLAGS = -Wall -g -pthread
+CFLAGS = -Wall -g -pthread -I../Common
 LDFLAGS = 
 
-SRCS = client.c dhcp_message.c client_utils.c
+SRCS = client.c ../Common/dhcp_message.c ../Common/config.c client_utils.c
 OBJS = $(SRCS:.c=.o)
 
 all: client_app monitor
